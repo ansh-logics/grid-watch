@@ -4,6 +4,39 @@ import { ScopedUser } from '../db';
 
 export const alertsRouter = Router();
 
+alertsRouter.get('/', async (req: Request, res: Response): Promise<void> => {
+  const authUser = req.authUser;
+  if (!authUser) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  const user: ScopedUser = {
+    id: authUser.id,
+    role: authUser.role,
+    zone_id: authUser.effectiveZoneId,
+  };
+
+  const limit = parseInt(req.query.limit as string) || 20;
+  const offset = parseInt(req.query.offset as string) || 0;
+  const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+  const severity = typeof req.query.severity === 'string' ? req.query.severity : undefined;
+
+  try {
+    const alerts = await AlertService.listAlerts(user, limit, offset, status, severity);
+    res.status(200).json({
+      data: alerts,
+      pagination: { limit, offset, count: alerts.length },
+    });
+  } catch (err: any) {
+    if (err.status) {
+      res.status(err.status).json({ error: err.message });
+      return;
+    }
+    console.error('Alert list query error:', err);
+    res.status(500).json({ error: 'Failed to fetch alerts' });
+  }
+});
+
 alertsRouter.put('/:id/status', async (req: Request, res: Response): Promise<void> => {
   const rawAlertId = req.params.id;
   const alertId = typeof rawAlertId === 'string' ? rawAlertId : rawAlertId?.[0] ?? '';

@@ -28,6 +28,53 @@ export class AlertsRepository {
     const res = await scopedQuery(user, `SELECT a.status FROM alerts a WHERE id = $1`, [alertId]);
     return res.rowCount && res.rowCount > 0 ? res.rows[0].status : null;
   }
+
+  static async listScoped(
+    user: ScopedUser,
+    limit: number,
+    offset: number,
+    status?: string,
+    severity?: string
+  ) {
+    const clauses: string[] = [];
+    const params: Array<string | number> = [];
+
+    if (status) {
+      params.push(status);
+      clauses.push(`a.status = $${params.length}::alert_status`);
+    }
+    if (severity) {
+      params.push(severity);
+      clauses.push(`a.severity = $${params.length}::alert_severity`);
+    }
+
+    params.push(limit);
+    const limitIndex = params.length;
+    params.push(offset);
+    const offsetIndex = params.length;
+
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+
+    const result = await scopedQuery(
+      user,
+      `
+      SELECT
+        a.id::text AS id,
+        an.sensor_id::text AS sensor_id,
+        a.severity::text AS severity,
+        a.status::text AS status,
+        a.created_at AS timestamp
+      FROM alerts a
+      JOIN anomalies an ON an.id = a.anomaly_id
+      ${where}
+      ORDER BY a.created_at DESC
+      LIMIT $${limitIndex} OFFSET $${offsetIndex}
+      `,
+      params
+    );
+
+    return result.rows;
+  }
 }
 
 export class SuppressionsRepository {

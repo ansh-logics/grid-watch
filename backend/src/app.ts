@@ -5,6 +5,7 @@ import { SSEManager } from './real-time/sse';
 import { ingestRouter } from './controllers/ingest.controller';
 import { historyRouter } from './controllers/history.controller';
 import { alertsRouter, suppressRouter } from './controllers/alert.controller';
+import { sensorsRouter } from './controllers/sensor.controller';
 import { requireIngestApiKey } from './middleware/ingest-api-key';
 import { authModeLabel, requireAuthContext } from './middleware/auth';
 import { createRateLimiter } from './middleware/rate-limit';
@@ -20,6 +21,7 @@ export function createApp() {
 
   app.use('/ingest', createRateLimiter(ingestRateLimit, windowMs), requireIngestApiKey, ingestRouter);
   app.use('/', requireAuthContext, createRateLimiter(authRateLimit, windowMs), historyRouter);
+  app.use('/', requireAuthContext, createRateLimiter(authRateLimit, windowMs), sensorsRouter);
   app.use('/alerts', requireAuthContext, createRateLimiter(authRateLimit, windowMs), alertsRouter);
   app.use('/', requireAuthContext, createRateLimiter(authRateLimit, windowMs), suppressRouter);
 

@@ -35,4 +35,14 @@ export class AlertService {
 
     return await SuppressionsRepository.createSuppression(user, sensorId, startTime, endTime);
   }
+
+  static async listAlerts(
+    user: ScopedUser,
+    limit: number,
+    offset: number,
+    status?: string,
+    severity?: string
+  ) {
+    return AlertsRepository.listScoped(user, limit, offset, status, severity);
+  }
 }
