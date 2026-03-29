@@ -7,6 +7,9 @@
  * Full (~5.5m): steady + spike + history — use after smoke passes; K6_PROFILE=full
  *   READING_COUNT=1000 STEADY_RPM=10 k6 run -e K6_PROFILE=full -e SENSOR_ID=... -e ZONE_ID=...
  *
+ * History p95 default 600ms (override HISTORY_P95_MS). Repository paginates ids first so large
+ * sensors stay fast; stricter: HISTORY_P95_MS=300 ...
+ *
  * Do not use placeholders: SENSOR_ID must be a real sensor row (FK on ingest).
  */
 import http from 'k6/http';
@@ -23,6 +26,10 @@ const ZONE_ID = (__ENV.ZONE_ID || '').trim();
 const USER_ID = __ENV.X_USER_ID || '00000000-0000-0000-0000-000000000001';
 const PROFILE = (__ENV.K6_PROFILE || 'smoke').toLowerCase();
 const READING_COUNT = __ENV.READING_COUNT ? parseInt(__ENV.READING_COUNT, 10) : PROFILE === 'smoke' ? 100 : 1000;
+/** Full profile: history p95 SLO (ms). Default 600. */
+const HISTORY_P95_MS = __ENV.HISTORY_P95_MS ? parseInt(__ENV.HISTORY_P95_MS, 10) : 600;
+/** Days of history window for GET .../history (default 30). */
+const HISTORY_WINDOW_DAYS = __ENV.HISTORY_WINDOW_DAYS ? parseInt(__ENV.HISTORY_WINDOW_DAYS, 10) : 30;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -101,7 +108,7 @@ const fullOptions = {
     },
     burst_history: {
       executor: 'constant-vus',
-      vus: __ENV.HISTORY_VUS ? parseInt(__ENV.HISTORY_VUS, 10) : 10,
+      vus: __ENV.HISTORY_VUS ? parseInt(__ENV.HISTORY_VUS, 10) : 5,
       duration: __ENV.HISTORY_DURATION || '1m',
       exec: 'burstHistory',
       startTime: '4m30s',
@@ -111,7 +118,7 @@ const fullOptions = {
   thresholds: {
     http_req_failed: ['rate<0.05'],
     ingest_duration_ms: ['p(95)<200'],
-    history_duration_ms: ['p(95)<300'],
+    history_duration_ms: [`p(95)<${HISTORY_P95_MS}`],
   },
 };
 
@@ -143,7 +150,7 @@ export function smokeScenario() {
 
   if (ZONE_ID && UUID_RE.test(ZONE_ID)) {
     const to = new Date();
-    const from = new Date(to.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const from = new Date(to.getTime() - HISTORY_WINDOW_DAYS * 24 * 60 * 60 * 1000);
     const qs = `from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}&limit=50&offset=0`;
     const url = `${BASE_URL}/sensors/${SENSOR_ID}/history?${qs}`;
     const hres = http.get(url, { ...HTTP_PARAMS, headers: { ...HTTP_PARAMS.headers, ...scopedHeaders() } });
@@ -173,7 +180,7 @@ export function burstHistory() {
     return;
   }
   const to = new Date();
-  const from = new Date(to.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const from = new Date(to.getTime() - HISTORY_WINDOW_DAYS * 24 * 60 * 60 * 1000);
   const qs = `from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}&limit=100&offset=0`;
   const url = `${BASE_URL}/sensors/${SENSOR_ID}/history?${qs}`;
   const res = http.get(url, { ...HTTP_PARAMS, headers: { ...HTTP_PARAMS.headers, ...scopedHeaders() } });

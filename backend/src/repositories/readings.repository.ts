@@ -41,7 +41,17 @@ export class ReadingsRepository {
    * Retrieves readings strictly scoped by the executing user's row-level-security perimeter.
    */
   static async getHistory(user: ScopedUser, sensorId: string, from: string, to: string, limit: number, offset: number) {
+    // Paginate reading ids first. The naive pattern (filter → join all rows → group → limit) scans the
+    // entire time range per sensor; after heavy ingest that can be millions of rows per request.
     const queryStr = `
+      WITH page AS (
+        SELECT id
+        FROM readings
+        WHERE sensor_id = $1
+          AND timestamp BETWEEN $2 AND $3
+        ORDER BY timestamp DESC
+        LIMIT $4 OFFSET $5
+      )
       SELECT 
         r.id AS reading_id,
         r.timestamp,
@@ -59,14 +69,12 @@ export class ReadingsRepository {
           )
         ) FILTER (WHERE an.id IS NOT NULL) AS anomalies
       FROM readings r
+      INNER JOIN page p ON p.id = r.id
       LEFT JOIN anomalies an ON an.reading_id = r.id
       LEFT JOIN rules ru ON an.rule_id = ru.id
       LEFT JOIN alerts al ON al.anomaly_id = an.id
-      WHERE r.sensor_id = $1
-        AND r.timestamp BETWEEN $2 AND $3
       GROUP BY r.id
       ORDER BY r.timestamp DESC
-      LIMIT $4 OFFSET $5
     `;
 
     const dbResult = await scopedQuery(user, queryStr, [sensorId, from, to, limit, offset]);
