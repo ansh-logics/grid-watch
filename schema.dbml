@@ -1,0 +1,123 @@
+Project GridWatch {
+  database_type: 'PostgreSQL'
+  Note: 'Real-Time Infrastructure Anomaly Detection Platform'
+}
+
+Enum sensor_state {
+  healthy
+  warning
+  critical
+  silent
+}
+
+Enum user_role {
+  operator
+  supervisor
+}
+
+Enum alert_severity {
+  warning
+  critical
+}
+
+Enum alert_status {
+  open
+  acknowledged
+  resolved
+}
+
+Table zones {
+  id UUID [primary key]
+  name varchar
+  created_at timestamp
+}
+
+Table users {
+  id UUID [primary key]
+  name varchar
+  email varchar [unique]
+  role user_role
+  zone_id UUID [ref: > zones.id]
+  created_at timestamp
+}
+
+Table sensors {
+  id UUID [primary key]
+  name varchar
+  zone_id UUID [ref: > zones.id]
+  current_state sensor_state
+  last_reading_at timestamp
+  created_at timestamp
+}
+
+Table readings {
+  id UUID [primary key]
+  sensor_id UUID [ref: > sensors.id]
+  timestamp timestamp
+  voltage numeric
+  current numeric
+  temperature numeric
+  status_code int
+  
+  indexes {
+    (sensor_id, timestamp) [name: "idx_readings_sensor_time"]
+    timestamp [name: "idx_readings_timestamp"]
+  }
+}
+
+Table rules {
+  id UUID [primary key]
+  sensor_id UUID [ref: > sensors.id]
+  rule_type varchar
+  config jsonb
+  severity alert_severity
+  created_at timestamp
+}
+
+Table suppressions {
+  id UUID [primary key]
+  sensor_id UUID [ref: > sensors.id]
+  start_time timestamp
+  end_time timestamp
+  created_by UUID [ref: > users.id]
+  created_at timestamp
+}
+
+Table anomalies {
+  id UUID [primary key]
+  sensor_id UUID [ref: > sensors.id]
+  rule_id UUID [ref: > rules.id]
+  reading_id UUID [ref: - readings.id] // nullable
+  detected_at timestamp
+  is_suppressed boolean
+}
+
+Table alerts {
+  id UUID [primary key]
+  anomaly_id UUID [ref: - anomalies.id]
+  severity alert_severity
+  status alert_status
+  created_at timestamp
+  updated_at timestamp
+  
+  indexes {
+    (status, severity) [name: "idx_alerts_status_severity"]
+  }
+}
+
+Table alert_audit_log {
+  id UUID [primary key]
+  alert_id UUID [ref: > alerts.id]
+  user_id UUID [ref: > users.id]
+  from_status alert_status
+  to_status alert_status
+  changed_at timestamp
+}
+
+Table escalations {
+  id UUID [primary key]
+  alert_id UUID [ref: - alerts.id]
+  operator_id UUID [ref: > users.id]
+  supervisor_id UUID [ref: > users.id]
+  escalated_at timestamp
+}

@@ -1,0 +1,116 @@
+-- GridWatch Real-Time Infrastructure Database Schema
+
+-- Enable UUID extension
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- Enums
+CREATE TYPE sensor_state AS ENUM ('healthy', 'warning', 'critical', 'silent');
+CREATE TYPE user_role AS ENUM ('operator', 'supervisor');
+CREATE TYPE alert_severity AS ENUM ('warning', 'critical');
+CREATE TYPE alert_status AS ENUM ('open', 'acknowledged', 'resolved');
+
+-- 1. Zones
+CREATE TABLE zones (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(255) NOT NULL UNIQUE,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 2. Users Operators & Supervisors
+CREATE TABLE users (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(255) NOT NULL,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    role user_role NOT NULL,
+    zone_id UUID REFERENCES zones(id), -- Nullable for supervisors
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 3. Sensors
+CREATE TABLE sensors (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(255) NOT NULL,
+    zone_id UUID NOT NULL REFERENCES zones(id),
+    current_state sensor_state DEFAULT 'healthy' NOT NULL,
+    last_reading_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 4. Readings (High throughput)
+CREATE TABLE readings (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    sensor_id UUID NOT NULL REFERENCES sensors(id) ON DELETE CASCADE,
+    timestamp TIMESTAMPTZ NOT NULL,
+    voltage NUMERIC(10, 4) NOT NULL,
+    current NUMERIC(10, 4) NOT NULL,
+    temperature NUMERIC(8, 2) NOT NULL,
+    status_code INTEGER NOT NULL
+);
+-- Index for rapid retrieval and Rule B evaluations
+CREATE INDEX idx_readings_sensor_time ON readings(sensor_id, timestamp DESC);
+CREATE INDEX idx_readings_timestamp ON readings(timestamp DESC);
+
+-- 5. Rules configuration
+CREATE TABLE rules (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    sensor_id UUID NOT NULL REFERENCES sensors(id) ON DELETE CASCADE,
+    rule_type VARCHAR(50) NOT NULL, -- 'threshold', 'rate_of_change', 'pattern_absence'
+    config JSONB NOT NULL, -- e.g. {"min_voltage": 10, "percentage": 15}
+    severity alert_severity DEFAULT 'warning' NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_rules_sensor ON rules(sensor_id);
+
+-- 6. Anomalies
+CREATE TABLE anomalies (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    sensor_id UUID NOT NULL REFERENCES sensors(id) ON DELETE CASCADE,
+    rule_id UUID NOT NULL REFERENCES rules(id),
+    reading_id UUID REFERENCES readings(id), -- Nullable if rule triggered by silence
+    detected_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    is_suppressed BOOLEAN DEFAULT FALSE NOT NULL
+);
+CREATE INDEX idx_anomalies_sensor_detected ON anomalies(sensor_id, detected_at DESC);
+
+-- 7. Alerts
+CREATE TABLE alerts (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    anomaly_id UUID UNIQUE NOT NULL REFERENCES anomalies(id) ON DELETE CASCADE,
+    severity alert_severity NOT NULL,
+    status alert_status DEFAULT 'open' NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+-- Fast path for fetching open alerts and escalations
+CREATE INDEX idx_alerts_status_severity ON alerts(status, severity);
+
+-- 8. Alert Audit Log (Append Only)
+CREATE TABLE alert_audit_log (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    alert_id UUID NOT NULL REFERENCES alerts(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id), -- System user if auto-escalation/system generated
+    from_status alert_status,
+    to_status alert_status NOT NULL,
+    changed_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_alert_audit_log_alert ON alert_audit_log(alert_id, changed_at DESC);
+
+-- 9. Escalations Log
+CREATE TABLE escalations (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    alert_id UUID UNIQUE NOT NULL REFERENCES alerts(id) ON DELETE CASCADE,
+    operator_id UUID REFERENCES users(id), -- The operator it was escalated FROM
+    supervisor_id UUID REFERENCES users(id), -- The supervisor it was escalated TO
+    escalated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 10. Suppressions
+CREATE TABLE suppressions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    sensor_id UUID NOT NULL REFERENCES sensors(id) ON DELETE CASCADE,
+    start_time TIMESTAMPTZ NOT NULL,
+    end_time TIMESTAMPTZ NOT NULL,
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_suppressions_sensor_time ON suppressions(sensor_id, start_time, end_time);
