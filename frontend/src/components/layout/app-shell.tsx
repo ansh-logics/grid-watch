@@ -1,6 +1,9 @@
 import { ActivitySquare, Bell, ChartLine, Moon, Sun } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, NavLink } from "react-router-dom";
+import { getAuthContext } from "../../utils/auth";
+import { shortId } from "../../utils/format";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { cn } from "../../utils/cn";
 
@@ -12,6 +15,7 @@ const links = [
 
 export function AppShell({ children }: { children: ReactNode }) {
   const [dark, setDark] = useState(() => localStorage.getItem("gridwatch.dark") === "1");
+  const { userId, zoneId, jwt } = getAuthContext();
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
@@ -32,6 +36,12 @@ export function AppShell({ children }: { children: ReactNode }) {
             GridWatch
           </Link>
           <nav className="flex items-center gap-2">
+            <Badge variant="outline" className="hidden md:inline-flex">
+              {jwt ? "JWT Auth Mode" : "Dev Auth Mode"}
+            </Badge>
+            <span className="hidden text-xs text-muted-foreground md:inline">
+              Operator: {shortId(userId)} | Zone: {shortId(zoneId)}
+            </span>
             {links.map((link) => (
               <NavLink
                 key={link.href}

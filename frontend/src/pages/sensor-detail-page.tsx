@@ -1,22 +1,30 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { EmptyState } from "../components/shared/empty-state";
 import { ErrorState } from "../components/shared/error-state";
 import { PageHeader } from "../components/shared/page-header";
+import { SensorSelect } from "../components/shared/sensor-select";
 import { StatusBadge } from "../components/shared/status-badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Input } from "../components/ui/input";
-import { getSensorDetail } from "../services/api/sensors";
+import { getSensorDetail, getZoneSensors } from "../services/api/sensors";
 import { suppressSensor } from "../services/api/suppression";
+import { getAuthContext } from "../utils/auth";
 import { queryKeys } from "../utils/query-keys";
 
 export function SensorDetailPage() {
   const { sensorId = "" } = useParams();
+  const navigate = useNavigate();
+  const { zoneId } = getAuthContext();
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
+  const sensorsQuery = useQuery({
+    queryKey: queryKeys.sensors(zoneId),
+    queryFn: () => getZoneSensors(zoneId),
+  });
 
   const detailQuery = useQuery({
     queryKey: queryKeys.sensorDetail(sensorId),
@@ -31,6 +39,11 @@ export function SensorDetailPage() {
   });
 
   const suppressionValid = useMemo(() => Boolean(startTime && endTime && endTime > startTime), [endTime, startTime]);
+  useEffect(() => {
+    if (!sensorId && sensorsQuery.data?.[0]) {
+      navigate(`/sensors/${sensorsQuery.data[0].sensor_id}`, { replace: true });
+    }
+  }, [navigate, sensorId, sensorsQuery.data]);
 
   if (detailQuery.isError) return <ErrorState message={(detailQuery.error as Error).message} />;
   if (detailQuery.isLoading) return <div className="rounded-md border p-6 text-sm text-muted-foreground">Loading...</div>;
@@ -40,7 +53,20 @@ export function SensorDetailPage() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title={`Sensor ${sensor.sensor_id}`} subtitle="Current status, recent readings and active suppressions." />
+      <PageHeader
+        title={`Sensor ${sensor.sensor_id}`}
+        subtitle="Current status, recent readings and active suppressions."
+        right={
+          sensorsQuery.data?.length ? (
+            <SensorSelect
+              sensors={sensorsQuery.data}
+              value={sensor.sensor_id}
+              onChange={(value) => navigate(`/sensors/${value}`)}
+              className="w-[380px] max-w-full"
+            />
+          ) : null
+        }
+      />
       <Card>
         <CardHeader>
           <CardTitle>Current State</CardTitle>

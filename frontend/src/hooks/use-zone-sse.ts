@@ -16,8 +16,9 @@ interface ZoneEvent {
 
 export function useZoneSSE(zoneId: string) {
   const queryClient = useQueryClient();
-  const [connected, setConnected] = useState(false);
+  const [status, setStatus] = useState<"connected" | "reconnecting" | "disconnected">("reconnecting");
   const [lastError, setLastError] = useState<string>("");
+  const [lastUpdatedSensorId, setLastUpdatedSensorId] = useState<string>("");
   const seenEventIds = useRef<Set<string>>(new Set());
   const controllerRef = useRef<AbortController | null>(null);
 
@@ -40,14 +41,14 @@ export function useZoneSSE(zoneId: string) {
       signal: controller.signal,
       openWhenHidden: true,
       onopen: async () => {
-        setConnected(true);
+        setStatus("connected");
         setLastError("");
       },
       onclose: () => {
-        setConnected(false);
+        setStatus("disconnected");
       },
       onerror: (err) => {
-        setConnected(false);
+        setStatus("reconnecting");
         setLastError(err instanceof Error ? err.message : "Connection dropped");
         throw err;
       },
@@ -89,6 +90,7 @@ export function useZoneSSE(zoneId: string) {
             };
             return next;
           });
+          setLastUpdatedSensorId(payload.sensor_id);
         } catch {
           // Drop malformed events, stream remains alive.
         }
@@ -99,9 +101,9 @@ export function useZoneSSE(zoneId: string) {
 
     return () => {
       controller.abort();
-      setConnected(false);
+      setStatus("disconnected");
     };
   }, [queryClient, zoneId]);
 
-  return { connected, lastError };
+  return { status, lastError, lastUpdatedSensorId };
 }

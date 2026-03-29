@@ -49,7 +49,7 @@ export function AlertsPage() {
           onTransition={(id, next) => mutation.mutate({ id, next })}
         />
       ) : (
-        <EmptyState message="No alerts match current filters." />
+        <EmptyState message="No active alerts - system is currently healthy." />
       )}
 
       <div className="flex justify-end gap-2">

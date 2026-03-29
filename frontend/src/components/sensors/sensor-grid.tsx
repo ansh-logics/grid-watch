@@ -3,7 +3,15 @@ import { EmptyState } from "../shared/empty-state";
 import { Skeleton } from "../ui/skeleton";
 import { SensorCard } from "./sensor-card";
 
-export function SensorGrid({ sensors, isLoading }: { sensors: Sensor[]; isLoading: boolean }) {
+export function SensorGrid({
+  sensors,
+  isLoading,
+  recentlyUpdatedSensorId,
+}: {
+  sensors: Sensor[];
+  isLoading: boolean;
+  recentlyUpdatedSensorId?: string;
+}) {
   if (isLoading) {
     return (
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -21,7 +29,11 @@ export function SensorGrid({ sensors, isLoading }: { sensors: Sensor[]; isLoadin
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
       {sensors.map((sensor) => (
-        <SensorCard key={sensor.sensor_id} sensor={sensor} />
+        <SensorCard
+          key={sensor.sensor_id}
+          sensor={sensor}
+          isRecentlyUpdated={recentlyUpdatedSensorId === sensor.sensor_id}
+        />
       ))}
     </div>
   );
