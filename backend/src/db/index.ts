@@ -43,9 +43,11 @@ export const scopedQuery = async (user: ScopedUser, text: string, params?: any[]
   try {
     // Setting transaction isolation context using local set
     await client.query('BEGIN');
-    await client.query('SET LOCAL request.role = $1', [user.role]);
+    // Use set_config: PostgreSQL does not accept bind parameters in SET LOCAL via the extended
+    // query protocol (node-pg), which caused scoped queries to fail with a syntax error.
+    await client.query(`SELECT set_config('request.role', $1, true)`, [user.role]);
     if (user.zone_id) {
-      await client.query('SET LOCAL request.zone_id = $1', [user.zone_id]);
+      await client.query(`SELECT set_config('request.zone_id', $1, true)`, [user.zone_id]);
     }
     
     // Execute query within context
