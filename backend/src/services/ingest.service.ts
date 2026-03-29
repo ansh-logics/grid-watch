@@ -1,8 +1,27 @@
 import { connection as redis, anomalyQueue } from '../queue';
 import { ReadingsRepository, ReadingPayload } from '../repositories/readings.repository';
 import { ScopedUser } from '../db';
+import crypto from 'crypto';
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(',')}]`;
+  }
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
+      a.localeCompare(b)
+    );
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
 
 export class IngestService {
+  private static readonly localIdempotency = new Map<string, string>();
+  private static useLocalIdempotencyStore() {
+    return process.env.NODE_ENV === 'test' || process.env.DISABLE_REDIS_IDEMPOTENCY === '1';
+  }
+
   /**
    * Fast ingress layer ensuring Idempotent delivery.
    * Caches successful idempotency keys in Redis returning short-circuits on matched duplicates.
@@ -19,24 +38,58 @@ export class IngestService {
     // Process Idempotency Guarantee
     if (idempotencyKey) {
       const lockKey = `ingest_lock:${idempotencyKey}`;
-      // Set key preventing race-conditions. Expire after 24h.
-      const isNewRequest = await redis.setnx(lockKey, 'LOCKING');
-      if (!isNewRequest) {
-         // It's a duplicate request. Do not write data but return success gracefully.
-         return { count: readings.length, status: 200 };
+      const bodyHash = crypto.createHash('sha256').update(stableStringify(readings)).digest('hex');
+      const encoded = JSON.stringify({ bodyHash, createdAt: Date.now() });
+
+      if (IngestService.useLocalIdempotencyStore()) {
+        const cached = IngestService.localIdempotency.get(lockKey);
+        if (cached) {
+          const parsed = JSON.parse(cached) as { bodyHash?: string };
+          if (parsed.bodyHash && parsed.bodyHash !== bodyHash) {
+            throw { status: 409, message: 'Idempotency key already used with a different payload' };
+          }
+          return { count: readings.length, status: 200 };
+        }
+        IngestService.localIdempotency.set(lockKey, encoded);
+      } else {
+        const cached = await redis.get(lockKey);
+        if (cached) {
+          const parsed = JSON.parse(cached) as { bodyHash?: string };
+          if (parsed.bodyHash && parsed.bodyHash !== bodyHash) {
+            throw { status: 409, message: 'Idempotency key already used with a different payload' };
+          }
+          return { count: readings.length, status: 200 };
+        }
+
+        const created = await redis.set(lockKey, encoded, 'EX', 86400, 'NX');
+        if (created !== 'OK') {
+          const afterSet = await redis.get(lockKey);
+          if (afterSet) {
+            const parsed = JSON.parse(afterSet) as { bodyHash?: string };
+            if (parsed.bodyHash && parsed.bodyHash !== bodyHash) {
+              throw { status: 409, message: 'Idempotency key already used with a different payload' };
+            }
+            return { count: readings.length, status: 200 };
+          }
+        }
       }
-      await redis.expire(lockKey, 86400); // 24 hours
     }
 
     // Push explicitly to durable DB storage directly via Repositories
     const insertedIds = await ReadingsRepository.bulkInsert(readings);
 
-    await anomalyQueue.add('detect-batch', {
-      readingIds: insertedIds,
-    }, {
-      attempts: 3, 
-      backoff: { type: 'exponential', delay: 2000 }
-    });
+    if (process.env.DISABLE_QUEUES !== '1') {
+      await anomalyQueue.add(
+        'detect-batch',
+        {
+          readingIds: insertedIds,
+        },
+        {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 2000 },
+        }
+      );
+    }
 
     return { count: insertedIds.length, status: 202 };
   }

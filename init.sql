@@ -26,6 +26,16 @@ CREATE TABLE users (
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Optional many-zone access for operators (supervisors can still access all zones)
+CREATE TABLE user_zone_access (
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    zone_id UUID NOT NULL REFERENCES zones(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, zone_id)
+);
+CREATE INDEX idx_user_zone_access_user ON user_zone_access(user_id);
+CREATE INDEX idx_user_zone_access_zone ON user_zone_access(zone_id);
+
 -- 3. Sensors
 CREATE TABLE sensors (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -114,3 +124,229 @@ CREATE TABLE suppressions (
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX idx_suppressions_sensor_time ON suppressions(sensor_id, start_time, end_time);
+
+-- ---------------------------------------------------------------------------
+-- Row-level security (session GUCs: request.role, request.zone_id, request.internal)
+-- Application sets these via set_config(..., true) inside transactions.
+-- ---------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION app_is_internal () RETURNS boolean AS $$
+  SELECT coalesce(current_setting('request.internal', true), '') = '1';
+$$ LANGUAGE sql STABLE;
+
+CREATE OR REPLACE FUNCTION app_is_supervisor () RETURNS boolean AS $$
+  SELECT coalesce(current_setting('request.role', true), '') = 'supervisor';
+$$ LANGUAGE sql STABLE;
+
+CREATE OR REPLACE FUNCTION app_request_zone () RETURNS uuid AS $$
+  SELECT (NULLIF(current_setting('request.zone_id', true), ''))::uuid;
+$$ LANGUAGE sql STABLE;
+
+ALTER TABLE zones ENABLE ROW LEVEL SECURITY;
+ALTER TABLE zones FORCE ROW LEVEL SECURITY;
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE users FORCE ROW LEVEL SECURITY;
+ALTER TABLE user_zone_access ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_zone_access FORCE ROW LEVEL SECURITY;
+ALTER TABLE sensors ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sensors FORCE ROW LEVEL SECURITY;
+ALTER TABLE readings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE readings FORCE ROW LEVEL SECURITY;
+ALTER TABLE rules ENABLE ROW LEVEL SECURITY;
+ALTER TABLE rules FORCE ROW LEVEL SECURITY;
+ALTER TABLE anomalies ENABLE ROW LEVEL SECURITY;
+ALTER TABLE anomalies FORCE ROW LEVEL SECURITY;
+ALTER TABLE alerts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE alerts FORCE ROW LEVEL SECURITY;
+ALTER TABLE alert_audit_log ENABLE ROW LEVEL SECURITY;
+ALTER TABLE alert_audit_log FORCE ROW LEVEL SECURITY;
+ALTER TABLE escalations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE escalations FORCE ROW LEVEL SECURITY;
+ALTER TABLE suppressions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE suppressions FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY zones_isolation ON zones FOR ALL USING (
+  app_is_internal()
+  OR app_is_supervisor()
+  OR id = app_request_zone()
+) WITH CHECK (
+  app_is_internal()
+  OR app_is_supervisor()
+  OR id = app_request_zone()
+);
+
+CREATE POLICY users_isolation ON users FOR ALL USING (
+  app_is_internal()
+  OR app_is_supervisor()
+  OR zone_id IS NOT DISTINCT FROM app_request_zone()
+) WITH CHECK (
+  app_is_internal()
+  OR app_is_supervisor()
+  OR zone_id IS NOT DISTINCT FROM app_request_zone()
+);
+
+CREATE POLICY user_zone_access_isolation ON user_zone_access FOR ALL USING (
+  app_is_internal()
+  OR app_is_supervisor()
+  OR EXISTS (
+    SELECT 1
+    FROM users u
+    WHERE u.id = user_zone_access.user_id
+      AND u.zone_id IS NOT DISTINCT FROM app_request_zone()
+  )
+) WITH CHECK (
+  app_is_internal()
+  OR app_is_supervisor()
+);
+
+CREATE POLICY sensors_isolation ON sensors FOR ALL USING (
+  app_is_internal()
+  OR app_is_supervisor()
+  OR zone_id = app_request_zone()
+) WITH CHECK (
+  app_is_internal()
+  OR app_is_supervisor()
+  OR zone_id = app_request_zone()
+);
+
+CREATE POLICY readings_isolation ON readings FOR ALL USING (
+  app_is_internal()
+  OR app_is_supervisor()
+  OR EXISTS (
+    SELECT 1
+    FROM sensors s
+    WHERE s.id = readings.sensor_id
+      AND s.zone_id = app_request_zone()
+  )
+) WITH CHECK (
+  app_is_internal()
+  OR app_is_supervisor()
+  OR EXISTS (
+    SELECT 1
+    FROM sensors s
+    WHERE s.id = readings.sensor_id
+      AND s.zone_id = app_request_zone()
+  )
+);
+
+CREATE POLICY rules_isolation ON rules FOR ALL USING (
+  app_is_internal()
+  OR app_is_supervisor()
+  OR EXISTS (
+    SELECT 1
+    FROM sensors s
+    WHERE s.id = rules.sensor_id
+      AND s.zone_id = app_request_zone()
+  )
+) WITH CHECK (
+  app_is_internal()
+  OR app_is_supervisor()
+  OR EXISTS (
+    SELECT 1
+    FROM sensors s
+    WHERE s.id = rules.sensor_id
+      AND s.zone_id = app_request_zone()
+  )
+);
+
+CREATE POLICY anomalies_isolation ON anomalies FOR ALL USING (
+  app_is_internal()
+  OR app_is_supervisor()
+  OR EXISTS (
+    SELECT 1
+    FROM sensors s
+    WHERE s.id = anomalies.sensor_id
+      AND s.zone_id = app_request_zone()
+  )
+) WITH CHECK (
+  app_is_internal()
+  OR app_is_supervisor()
+  OR EXISTS (
+    SELECT 1
+    FROM sensors s
+    WHERE s.id = anomalies.sensor_id
+      AND s.zone_id = app_request_zone()
+  )
+);
+
+CREATE POLICY alerts_isolation ON alerts FOR ALL USING (
+  app_is_internal()
+  OR app_is_supervisor()
+  OR EXISTS (
+    SELECT 1
+    FROM anomalies an
+    JOIN sensors s ON s.id = an.sensor_id
+    WHERE an.id = alerts.anomaly_id
+      AND s.zone_id = app_request_zone()
+  )
+) WITH CHECK (
+  app_is_internal()
+  OR app_is_supervisor()
+  OR EXISTS (
+    SELECT 1
+    FROM anomalies an
+    JOIN sensors s ON s.id = an.sensor_id
+    WHERE an.id = anomaly_id
+      AND s.zone_id = app_request_zone()
+  )
+);
+
+CREATE POLICY alert_audit_log_isolation ON alert_audit_log FOR ALL USING (
+  app_is_internal()
+  OR app_is_supervisor()
+  OR EXISTS (
+    SELECT 1
+    FROM alerts a
+    JOIN anomalies an ON an.id = a.anomaly_id
+    JOIN sensors s ON s.id = an.sensor_id
+    WHERE a.id = alert_audit_log.alert_id
+      AND s.zone_id = app_request_zone()
+  )
+) WITH CHECK (
+  app_is_internal()
+  OR app_is_supervisor()
+  OR EXISTS (
+    SELECT 1
+    FROM alerts a
+    JOIN anomalies an ON an.id = a.anomaly_id
+    JOIN sensors s ON s.id = an.sensor_id
+    WHERE a.id = alert_id
+      AND s.zone_id = app_request_zone()
+  )
+);
+
+CREATE POLICY escalations_isolation ON escalations FOR ALL USING (
+  app_is_internal()
+  OR app_is_supervisor()
+  OR EXISTS (
+    SELECT 1
+    FROM alerts a
+    JOIN anomalies an ON an.id = a.anomaly_id
+    JOIN sensors s ON s.id = an.sensor_id
+    WHERE a.id = escalations.alert_id
+      AND s.zone_id = app_request_zone()
+  )
+) WITH CHECK (
+  app_is_internal()
+  OR app_is_supervisor()
+);
+
+CREATE POLICY suppressions_isolation ON suppressions FOR ALL USING (
+  app_is_internal()
+  OR app_is_supervisor()
+  OR EXISTS (
+    SELECT 1
+    FROM sensors s
+    WHERE s.id = suppressions.sensor_id
+      AND s.zone_id = app_request_zone()
+  )
+) WITH CHECK (
+  app_is_internal()
+  OR app_is_supervisor()
+  OR EXISTS (
+    SELECT 1
+    FROM sensors s
+    WHERE s.id = sensor_id
+      AND s.zone_id = app_request_zone()
+  )
+);

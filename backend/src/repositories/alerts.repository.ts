@@ -1,4 +1,4 @@
-import { scopedQuery, ScopedUser } from '../db';
+import { scopedQuery, scopedTransaction, ScopedUser } from '../db';
 import { v4 as uuidv4 } from 'uuid';
 
 export class AlertsRepository {
@@ -7,14 +7,21 @@ export class AlertsRepository {
    * Assumes explicit caller validation of correct transitions exists higher.
    */
   static async updateStatus(user: ScopedUser, alertId: string, currentStatus: string, newStatus: string): Promise<void> {
-    await scopedQuery(user, `
-      DO $$
-      BEGIN
-        UPDATE alerts SET status = '${newStatus}', updated_at = NOW() WHERE id = '${alertId}';
-        INSERT INTO alert_audit_log (id, alert_id, user_id, from_status, to_status, changed_at) 
-        VALUES ('${uuidv4()}', '${alertId}', '${user.id}', '${currentStatus}', '${newStatus}', NOW());
-      END $$;
-    `);
+    await scopedTransaction(user, async (client) => {
+      const auditId = uuidv4();
+      const upd = await client.query(
+        `UPDATE alerts SET status = $1::alert_status, updated_at = NOW() WHERE id = $2::uuid`,
+        [newStatus, alertId]
+      );
+      if (!upd.rowCount) {
+        throw { status: 404, message: 'Alert not found or inaccessible by zone' };
+      }
+      await client.query(
+        `INSERT INTO alert_audit_log (id, alert_id, user_id, from_status, to_status, changed_at)
+         VALUES ($1::uuid, $2::uuid, $3::uuid, $4::alert_status, $5::alert_status, NOW())`,
+        [auditId, alertId, user.id, currentStatus, newStatus]
+      );
+    });
   }
 
   static async findAlertStatusScoped(user: ScopedUser, alertId: string): Promise<string | null> {
@@ -27,7 +34,7 @@ export class SuppressionsRepository {
   static async createSuppression(user: ScopedUser, sensorId: string, startTime: string, endTime: string): Promise<string> {
     const sensorCheck = await scopedQuery(user, `SELECT id FROM sensors WHERE id = $1`, [sensorId]);
     if (sensorCheck.rowCount === 0) {
-      throw new Error('Sensor unavailable or access denied by RLS');
+      throw { status: 404, message: 'Sensor unavailable or access denied by RLS' };
     }
 
     const suppressionId = uuidv4();

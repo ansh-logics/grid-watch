@@ -1,5 +1,4 @@
-import format from 'pg-format';
-import { query, scopedQuery, ScopedUser } from '../db';
+import { internalQuery, scopedQuery, ScopedUser } from '../db';
 import { v4 as uuidv4 } from 'uuid';
 
 export interface ReadingPayload {
@@ -17,23 +16,38 @@ export class ReadingsRepository {
    * Takes the raw readings uniformly and returns the successfully inserted UUIDs.
    */
   static async bulkInsert(readings: ReadingPayload[]): Promise<string[]> {
-    const mapped = readings.map((r) => [
-      uuidv4(),
-      r.sensor_id,
-      new Date(r.timestamp),
-      r.voltage,
-      r.current,
-      r.temperature,
-      r.status_code,
+    const ids = readings.map(() => uuidv4());
+    const sensorIds = readings.map((r) => r.sensor_id);
+    const timestamps = readings.map((r) => new Date(r.timestamp));
+    const voltages = readings.map((r) => r.voltage);
+    const currents = readings.map((r) => r.current);
+    const temperatures = readings.map((r) => r.temperature);
+    const statusCodes = readings.map((r) => r.status_code);
+
+    const insertQuery = `
+      INSERT INTO readings (id, sensor_id, timestamp, voltage, current, temperature, status_code)
+      SELECT *
+      FROM unnest(
+        $1::uuid[],
+        $2::uuid[],
+        $3::timestamptz[],
+        $4::numeric[],
+        $5::numeric[],
+        $6::numeric[],
+        $7::int[]
+      ) AS t(id, sensor_id, timestamp, voltage, current, temperature, status_code)
+      RETURNING id
+    `;
+
+    const dbResult = await internalQuery(insertQuery, [
+      ids,
+      sensorIds,
+      timestamps,
+      voltages,
+      currents,
+      temperatures,
+      statusCodes,
     ]);
-
-    const insertQuery = format(
-      `INSERT INTO readings (id, sensor_id, timestamp, voltage, current, temperature, status_code) 
-       VALUES %L RETURNING id`,
-      mapped
-    );
-
-    const dbResult = await query(insertQuery);
     return dbResult.rows.map((r: any) => r.id);
   }
 

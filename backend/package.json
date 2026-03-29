@@ -6,7 +6,10 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "nodemon src/index.ts"
+    "dev": "nodemon --exec \"ts-node --files\" src/index.ts",
+    "dev:docker": "npm install && npm run dev",
+    "test": "vitest run --config vitest.config.ts",
+    "migrate": "ts-node src/scripts/migrate.ts"
   },
   "keywords": [],
   "author": "",
@@ -18,17 +21,21 @@
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "ioredis": "^5.10.1",
+    "jsonwebtoken": "^9.0.2",
     "pg": "^8.20.0",
-    "pg-format": "^1.0.4"
+    "uuid": "^13.0.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^25.5.0",
     "@types/pg": "^8.20.0",
-    "@types/pg-format": "^1.0.5",
+    "@types/supertest": "^6.0.3",
     "nodemon": "^3.1.14",
+    "supertest": "^7.1.4",
     "ts-node": "^10.9.2",
-    "typescript": "^6.0.2"
+    "typescript": "^6.0.2",
+    "vitest": "^4.0.0-beta.6"
   }
 }

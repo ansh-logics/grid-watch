@@ -1,5 +1,13 @@
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import dotenv from 'dotenv';
+
+export type { PoolClient };
+
+export interface ScopedUser {
+  id: string;
+  role: 'operator' | 'supervisor';
+  zone_id?: string;
+}
 
 dotenv.config();
 
@@ -23,17 +31,71 @@ pool.on('error', (err, client) => {
 });
 
 /**
- * A handy wrapper for generic queries
+ * A handy wrapper for generic queries (no RLS session — prefer internalQuery when RLS is enabled).
  */
 export const query = (text: string, params?: any[]) => {
   return pool.query(text, params);
 };
 
-export interface ScopedUser {
-  id: string;
-  role: 'operator' | 'supervisor';
-  zone_id?: string;
-}
+/**
+ * Worker/ingest path: sets request.internal so RLS policies allow service operations.
+ */
+export const internalQuery = async (text: string, params?: any[]) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`SELECT set_config('request.internal', '1', true)`);
+    const res = await client.query(text, params);
+    await client.query('COMMIT');
+    return res;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+};
+
+/**
+ * Long-running internal work (anomaly job, cron) in one transaction with internal RLS context.
+ */
+export const withInternalTransaction = async <T>(fn: (client: PoolClient) => Promise<T>): Promise<T> => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`SELECT set_config('request.internal', '1', true)`);
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+};
+
+/**
+ * Multi-statement scoped work (e.g. alert update + audit) under operator/supervisor RLS context.
+ */
+export const scopedTransaction = async <T>(user: ScopedUser, fn: (client: PoolClient) => Promise<T>): Promise<T> => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`SELECT set_config('request.role', $1, true)`, [user.role]);
+    if (user.zone_id) {
+      await client.query(`SELECT set_config('request.zone_id', $1, true)`, [user.zone_id]);
+    }
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+};
 
 /**
  * Runs a query within a database transaction context scoped to a user's zone.

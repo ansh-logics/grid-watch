@@ -13,10 +13,15 @@ historyRouter.get('/sensors/:id/history', async (req: Request, res: Response): P
   const limit = parseInt(req.query.limit as string) || 100;
   const offset = parseInt(req.query.offset as string) || 0;
 
+  const authUser = req.authUser;
+  if (!authUser) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
   const user: ScopedUser = {
-    id: req.header('x-user-id') || '00000000-0000-0000-0000-000000000000',
-    role: (req.header('x-user-role') as 'operator' | 'supervisor') || 'operator',
-    zone_id: req.header('x-user-zone') || undefined,
+    id: authUser.id,
+    role: authUser.role,
+    zone_id: authUser.effectiveZoneId,
   };
 
   try {

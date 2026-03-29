@@ -11,6 +11,7 @@
  * sensors stay fast; stricter: HISTORY_P95_MS=300 ...
  *
  * Do not use placeholders: SENSOR_ID must be a real sensor row (FK on ingest).
+ * If backend sets INGEST_API_KEY, add header: X-Api-Key: <key> on POST /ingest (see HTTP_PARAMS in script).
  */
 import http from 'k6/http';
 import { check, sleep } from 'k6';
@@ -62,6 +63,13 @@ const HTTP_PARAMS = {
   timeout: __ENV.HTTP_TIMEOUT || '120s',
   headers: { 'Content-Type': 'application/json' },
 };
+
+function ingestParams() {
+  const key = __ENV.INGEST_API_KEY || '';
+  const headers = { ...HTTP_PARAMS.headers };
+  if (key) headers['X-Api-Key'] = key;
+  return { ...HTTP_PARAMS, headers };
+}
 
 const smokeOptions = {
   scenarios: {
@@ -141,7 +149,7 @@ export function setup() {
 
 export function smokeScenario() {
   const body = JSON.stringify(readingBatch(READING_COUNT, Date.now()));
-  const res = http.post(`${BASE_URL}/ingest`, body, HTTP_PARAMS);
+  const res = http.post(`${BASE_URL}/ingest`, body, ingestParams());
   ingestDuration.add(res.timings.duration);
   const ingestOk = check(res, {
     'ingest 2xx': (r) => r.status === 202 || r.status === 200,
@@ -162,7 +170,7 @@ export function smokeScenario() {
 
 export function steadyIngest() {
   const body = JSON.stringify(readingBatch(READING_COUNT, Date.now()));
-  const res = http.post(`${BASE_URL}/ingest`, body, HTTP_PARAMS);
+  const res = http.post(`${BASE_URL}/ingest`, body, ingestParams());
   ingestDuration.add(res.timings.duration);
   const ok = check(res, {
     'ingest 2xx': (r) => r.status === 202 || r.status === 200,

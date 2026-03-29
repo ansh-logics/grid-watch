@@ -8,10 +8,15 @@ alertsRouter.put('/:id/status', async (req: Request, res: Response): Promise<voi
   const rawAlertId = req.params.id;
   const alertId = typeof rawAlertId === 'string' ? rawAlertId : rawAlertId?.[0] ?? '';
   const { status: newStatus } = req.body;
+  const authUser = req.authUser;
+  if (!authUser) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
   const user: ScopedUser = {
-    id: req.header('x-user-id') || '00000000-0000-0000-0000-000000000000',
-    role: (req.header('x-user-role') as 'operator' | 'supervisor') || 'operator',
-    zone_id: req.header('x-user-zone'),
+    id: authUser.id,
+    role: authUser.role,
+    zone_id: authUser.effectiveZoneId,
   };
 
   try {
@@ -34,10 +39,15 @@ suppressRouter.post('/sensors/:id/suppress', async (req: Request, res: Response)
   const rawSensorId = req.params.id;
   const sensorId = typeof rawSensorId === 'string' ? rawSensorId : rawSensorId?.[0] ?? '';
   const { startTime, endTime } = req.body;
+  const authUser = req.authUser;
+  if (!authUser) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
   const user: ScopedUser = {
-    id: req.header('x-user-id') || '00000000-0000-0000-0000-000000000000',
-    role: (req.header('x-user-role') as 'operator' | 'supervisor') || 'operator',
-    zone_id: req.header('x-user-zone'),
+    id: authUser.id,
+    role: authUser.role,
+    zone_id: authUser.effectiveZoneId,
   };
 
   try {
