@@ -53,7 +53,7 @@ flowchart LR
   W -->|publish zone event| R[(Redis Pub/Sub)]
   R --> API[SSE manager]
   API -->|SSE /events/zone/:zoneId| UI[Dashboard]
-  UI -->|update cache (react-query)| UI
+  UI -->|update react-query cache| UI
 ```
 
 ---
