@@ -149,9 +149,9 @@ This design keeps the dashboard responsive while avoiding periodic “pull” re
    - Choice: enforce zone isolation in Postgres via RLS, but allow workers to run with an explicit “internal” DB session context.
    - Why: it keeps the security boundary in the database, while still supporting cross-zone internal automation safely.
 
-2. **Idempotent ingestion that’s actually safe**
-   - Choice: idempotency key + payload hash check (409 on same key with different body).
-   - Why: prevents “at least once” retries from duplicating data, without hiding client bugs that reuse keys incorrectly.
+2. **Load testing + Grafana (learning curve)**
+   - Choice: use a k6 script (`tests/load/k6-gridwatch.js`) to generate realistic ingest traffic and then visualize what was happening in Grafana.
+   - Why: I’d never used Grafana before this. I had to learn it quickly and implement dashboards/queries while the system was changing, and I used AI here to help me learn faster. There was a lot of trial-and-error to get useful panels (and to separate “my code is slow” from “my test is unrealistic”).
 
 3. **Real-time fan-out without polling**
    - Choice: SSE for client delivery + Redis Pub/Sub for cross-process broadcast.
