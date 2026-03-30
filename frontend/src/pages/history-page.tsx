@@ -16,7 +16,7 @@ import { queryKeys } from "../utils/query-keys";
 const LIMIT = 100;
 
 function defaultFrom() {
-  const d = new Date(Date.now() - 1000 * 60 * 60 * 24);
+  const d = new Date(Date.now() - 1000 * 60 * 60 * 24 * 7);
   return d.toISOString().slice(0, 16);
 }
 function defaultTo() {
